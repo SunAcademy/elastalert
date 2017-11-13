@@ -18,6 +18,7 @@ from socket import error
 import dateutil.tz
 import kibana
 import yaml
+import prometheus
 from alerts import DebugAlerter
 from config import get_rule_hashes
 from config import load_configuration
@@ -103,6 +104,7 @@ class ElastAlerter():
         self.parse_args(args)
         self.debug = self.args.debug
         self.verbose = self.args.verbose
+        self.prometheus = prometheus.Prometheus()
 
         if self.verbose and self.debug:
             elastalert_logger.info(
@@ -591,6 +593,7 @@ class ElastAlerter():
         if data is None:
             return False
         elif data:
+            self.prometheus.add_metrics(rule=rule, data=data)
             if rule.get('use_count_query'):
                 rule_inst.add_count_data(data)
             elif rule.get('use_terms_query'):
