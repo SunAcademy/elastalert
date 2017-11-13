@@ -9,9 +9,10 @@ class Prometheus:
         start_http_server(8000)
 
     def add_metrics(self, rule, data):
-        print rule, data
         name = rule["name"]
         g = self.get_metircs(name)
+        if data is None:
+            return g.set(0)
         g.set(len(data))
 
     def get_metircs(self, name="None", describe="This is generate from elastalert"):

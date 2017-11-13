@@ -590,10 +590,10 @@ class ElastAlerter():
                 self.num_dupes += old_len - len(data)
 
         # There was an exception while querying
+        self.prometheus.add_metrics(rule=rule, data=data)
         if data is None:
             return False
         elif data:
-            self.prometheus.add_metrics(rule=rule, data=data)
             if rule.get('use_count_query'):
                 rule_inst.add_count_data(data)
             elif rule.get('use_terms_query'):

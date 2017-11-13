@@ -397,6 +397,8 @@ class EmailAlerter(Alerter):
             self.rule['email_add_domain'] = '@' + add_suffix
 
     def alert(self, matches):
+        if self.rule.get("ignore_email", False):
+            return True
         body = self.create_alert_body(matches)
 
         # Add JIRA ticket if it exists
