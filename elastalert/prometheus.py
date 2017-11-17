@@ -9,7 +9,7 @@ class Prometheus:
         start_http_server(8000)
 
     def add_metrics(self, rule, data):
-        name = rule["name"]
+        name = rule.get("prometheus_metric_name") or rule["name"]
         g = self.get_metircs(name, labels=rule["labels"])
         if rule.get("aggregation_query_element"):
             self.set_aggregation_values(g, data=data, r=rule)
