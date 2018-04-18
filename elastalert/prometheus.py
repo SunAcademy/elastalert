@@ -10,7 +10,7 @@ class Prometheus:
 
     def add_metrics(self, rule, data):
         name = rule.get("prometheus_metric_name") or rule["name"]
-        g = self.get_metircs(name, labels=rule["labels"])
+        g = self.get_metircs(name, labels="labels" in rule and rule["labels"] or False)
         if rule.get("aggregation_query_element"):
             self.set_aggregation_values(g, data=data, r=rule)
         else:
@@ -37,6 +37,8 @@ class Prometheus:
 
     def add_labels(self, metric, data={}, r={}):
         m = metric
+        if "labels" not in r:
+            return m
         l = r["labels"]
         v = []
         for x in l:
@@ -50,6 +52,6 @@ class Prometheus:
     def get_metircs(self, name="None", describe="This is generate from elastalert", labels={}):
         if name in self.metrics:
             return self.metrics[name]
-        g = Counter(name, describe, labelnames=labels.keys())
+        g = Counter(name, describe, labelnames=labels and labels.keys() or [])
         self.metrics[name] = g
         return g
