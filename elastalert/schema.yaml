@@ -174,12 +174,14 @@ properties:
   match_enhancements: {type: array, items: {type: string}}
   query_key: *arrayOfString
   replace_dots_in_field_names: {type: boolean}
+  scan_entire_timeframe: {type: boolean}
 
   # Alert Content
   alert_text: {type: string} # Python format string
   alert_text_args: {type: array, items: {type: string}}
   alert_text_kw: {type: object}
-  alert_text_type: {enum: [alert_text_only, exclude_fields]}
+  alert_text_type: {enum: [alert_text_only, exclude_fields, aggregation_summary_only]}
+  alert_missing_value: {type: string}
   timestamp_field: {type: string}
   field: {}
 
@@ -214,11 +216,12 @@ properties:
 
   ### HipChat
   hipchat_auth_token: {type: string}
-  hipchat_room_id: {type: string}
+  hipchat_room_id: {type: [string, integer]}
   hipchat_domain: {type: string}
   hipchat_ignore_ssl_errors: {type: boolean}
   hipchat_notify: {type: boolean}
   hipchat_from: {type: string}
+  hipchat_mentions: {type: array, items: {type: string}}
 
   ### Stride
   stride_access_token: {type: string}
@@ -256,6 +259,7 @@ properties:
   victorops_api_key: {type: string}
   victorops_routing_key: {type: string}
   victorops_message_type: {enum: [INFO, WARNING, ACKNOWLEDGEMENT, CRITICAL, RECOVERY]}
+  victorops_entity_id: {type: string}
   victorops_entity_display_name: {type: string}
 
   ### Telegram

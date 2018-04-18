@@ -851,6 +851,16 @@ def test_set_starttime(ea):
     ea.set_starttime(ea.rules[0], end)
     assert ea.rules[0]['starttime'] == ea.rules[0]['previous_endtime']
 
+    # scan_entire_timeframe
+    ea.rules[0].pop('previous_endtime')
+    ea.rules[0].pop('starttime')
+    ea.rules[0]['timeframe'] = datetime.timedelta(days=3)
+    ea.rules[0]['scan_entire_timeframe'] = True
+    with mock.patch.object(ea, 'get_starttime') as mock_gs:
+        mock_gs.return_value = None
+        ea.set_starttime(ea.rules[0], end)
+    assert ea.rules[0]['starttime'] == end - datetime.timedelta(days=3)
+
 
 def test_kibana_dashboard(ea):
     match = {'@timestamp': '2014-10-11T00:00:00'}
@@ -937,6 +947,17 @@ def test_rule_changes(ea):
                 mock_hashes.return_value = new_hashes
                 ea.load_rule_changes()
                 mock_send.assert_called_once_with(exception=mock.ANY, rule_file='rules/rule4.yaml')
+    assert len(ea.rules) == 3
+    assert not any(['new' in rule for rule in ea.rules])
+
+    # A new rule with is_enabled=False wont load
+    new_hashes = copy.copy(new_hashes)
+    new_hashes.update({'rules/rule4.yaml': 'asdf'})
+    with mock.patch('elastalert.elastalert.get_rule_hashes') as mock_hashes:
+        with mock.patch('elastalert.elastalert.load_configuration') as mock_load:
+            mock_load.return_value = {'filter': [], 'name': 'rule4', 'new': 'stuff', 'is_enabled': False, 'rule_file': 'rules/rule4.yaml'}
+            mock_hashes.return_value = new_hashes
+            ea.load_rule_changes()
     assert len(ea.rules) == 3
     assert not any(['new' in rule for rule in ea.rules])
 

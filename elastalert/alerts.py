@@ -5,9 +5,11 @@ import json
 import logging
 import subprocess
 import sys
+import time
 import warnings
 from email.mime.text import MIMEText
 from email.utils import formatdate
+from HTMLParser import HTMLParser
 from smtplib import SMTP
 from smtplib import SMTP_SSL
 from smtplib import SMTPAuthenticationError
@@ -53,7 +55,7 @@ class BasicMatchString(object):
             self.text += '\n'
 
     def _add_custom_alert_text(self):
-        missing = '<MISSING VALUE>'
+        missing = self.rule.get('alert_missing_value', '<MISSING VALUE>')
         alert_text = unicode(self.rule.get('alert_text', ''))
         if 'alert_text_args' in self.rule:
             alert_text_args = self.rule.get('alert_text_args')
@@ -231,18 +233,20 @@ class Alerter(object):
                     if alert_value:
                         alert_subject_values[i] = alert_value
 
-            alert_subject_values = ['<MISSING VALUE>' if val is None else val for val in alert_subject_values]
+            missing = self.rule.get('alert_missing_value', '<MISSING VALUE>')
+            alert_subject_values = [missing if val is None else val for val in alert_subject_values]
             return alert_subject.format(*alert_subject_values)
 
         return alert_subject
 
     def create_alert_body(self, matches):
         body = self.get_aggregation_summary_text(matches)
-        for match in matches:
-            body += unicode(BasicMatchString(self.rule, match))
-            # Separate text of aggregated alerts with dashes
-            if len(matches) > 1:
-                body += '\n----------------------------------------\n'
+        if self.rule.get('alert_text_type') != 'aggregation_summary_only':
+            for match in matches:
+                body += unicode(BasicMatchString(self.rule, match))
+                # Separate text of aggregated alerts with dashes
+                if len(matches) > 1:
+                    body += '\n----------------------------------------\n'
         return body
 
     def get_aggregation_summary_text__maximum_width(self):
@@ -262,6 +266,8 @@ class Alerter(object):
             )
             text_table = Texttable(max_width=self.get_aggregation_summary_text__maximum_width())
             text_table.header(summary_table_fields_with_count)
+            # Format all fields as 'text' to avoid long numbers being shown as scientific notation
+            text_table.set_cols_dtype(['t' for i in summary_table_fields_with_count])
             match_aggregation = {}
 
             # Maintain an aggregate count for each unique key encountered in the aggregation period
@@ -301,23 +307,27 @@ class StompAlerter(Alerter):
         alerts = []
 
         qk = self.rule.get('query_key', None)
+
         fullmessage = {}
         for match in matches:
-            resmatch = lookup_es_key(match, qk)
+            if qk is not None:
+                resmatch = lookup_es_key(match, qk)
+            else:
+                resmatch = None
 
             if resmatch is not None:
                 elastalert_logger.info(
                     'Alert for %s, %s at %s:' % (self.rule['name'], resmatch, lookup_es_key(match, self.rule['timestamp_field'])))
                 alerts.append(
-                    '1)Alert for %s, %s at %s:' % (self.rule['name'], resmatch, lookup_es_key(
+                    'Alert for %s, %s at %s:' % (self.rule['name'], resmatch, lookup_es_key(
                         match, self.rule['timestamp_field']))
                 )
                 fullmessage['match'] = resmatch
             else:
-                elastalert_logger.info('Alert for %s at %s:' % (
+                elastalert_logger.info('Rule %s generated an alert at %s:' % (
                     self.rule['name'], lookup_es_key(match, self.rule['timestamp_field'])))
                 alerts.append(
-                    '2)Alert for %s at %s:' % (self.rule['name'], lookup_es_key(
+                    'Rule %s generated an alert at %s:' % (self.rule['name'], lookup_es_key(
                         match, self.rule['timestamp_field']))
                 )
                 fullmessage['match'] = lookup_es_key(
@@ -326,10 +336,14 @@ class StompAlerter(Alerter):
 
         fullmessage['alerts'] = alerts
         fullmessage['rule'] = self.rule['name']
+        fullmessage['rule_file'] = self.rule['rule_file']
+
         fullmessage['matching'] = unicode(BasicMatchString(self.rule, match))
         fullmessage['alertDate'] = datetime.datetime.now(
         ).strftime("%Y-%m-%d %H:%M:%S")
         fullmessage['body'] = self.create_alert_body(matches)
+
+        fullmessage['matches'] = matches
 
         self.stomp_hostname = self.rule.get('stomp_hostname', 'localhost')
         self.stomp_hostport = self.rule.get('stomp_hostport', '61613')
@@ -342,6 +356,8 @@ class StompAlerter(Alerter):
 
         conn.start()
         conn.connect(self.stomp_login, self.stomp_password)
+        # Ensures that the CONNECTED frame is received otherwise, the disconnect call will fail.
+        time.sleep(1)
         conn.send(self.stomp_destination, json.dumps(fullmessage))
         conn.disconnect()
 
@@ -555,6 +571,7 @@ class JiraAlerter(Alerter):
         try:
             self.client = JIRA(self.server, basic_auth=(self.user, self.password))
             self.get_priorities()
+            self.jira_fields = self.client.fields()
             self.get_arbitrary_fields()
         except JIRAError as e:
             # JIRAError may contain HTML, pass along only first 1024 chars
@@ -661,14 +678,12 @@ class JiraAlerter(Alerter):
         # Clear jira_args
         self.reset_jira_args()
 
-        # This API returns metadata about all the fields defined on the jira server (built-ins and custom ones)
-        fields = self.client.fields()
         for jira_field, value in self.rule.iteritems():
             # If we find a field that is not covered by the set that we are aware of, it means it is either:
             # 1. A built-in supported field in JIRA that we don't have on our radar
             # 2. A custom field that a JIRA admin has configured
             if jira_field.startswith('jira_') and jira_field not in self.known_field_list and str(value)[:1] != '#':
-                self.set_jira_arg(jira_field, value, fields)
+                self.set_jira_arg(jira_field, value, self.jira_fields)
             if jira_field.startswith('jira_') and jira_field not in self.known_field_list and str(value)[:1] == '#':
                 self.deferred_settings.append(jira_field)
 
@@ -704,9 +719,11 @@ class JiraAlerter(Alerter):
         date = (datetime.datetime.now() - datetime.timedelta(days=self.max_age)).strftime('%Y-%m-%d')
         jql = 'project=%s AND summary~"%s" and created >= "%s"' % (self.project, title, date)
         if self.bump_in_statuses:
-            jql = '%s and status in (%s)' % (jql, ','.join(self.bump_in_statuses))
+            jql = '%s and status in (%s)' % (jql, ','.join(["\"%s\"" % status if ' ' in status else status for status
+                                                            in self.bump_in_statuses]))
         if self.bump_not_in_statuses:
-            jql = '%s and status not in (%s)' % (jql, ','.join(self.bump_not_in_statuses))
+            jql = '%s and status not in (%s)' % (jql, ','.join(["\"%s\"" % status if ' ' in status else status
+                                                                for status in self.bump_not_in_statuses]))
         try:
             issues = self.client.search_issues(jql)
         except JIRAError as e:
@@ -723,6 +740,8 @@ class JiraAlerter(Alerter):
         self.client.add_comment(ticket, comment)
 
     def alert(self, matches):
+        # Reset arbitrary fields to pick up changes
+        self.get_arbitrary_fields()
         if len(self.deferred_settings) > 0:
             fields = self.client.fields()
             for jira_field in self.deferred_settings:
@@ -782,10 +801,11 @@ class JiraAlerter(Alerter):
     def create_alert_body(self, matches):
         body = self.description + '\n'
         body += self.get_aggregation_summary_text(matches)
-        for match in matches:
-            body += unicode(JiraFormattedMatchString(self.rule, match))
-            if len(matches) > 1:
-                body += '\n----------------------------------------\n'
+        if self.rule.get('alert_text_type') != 'aggregation_summary_only':
+            for match in matches:
+                body += unicode(JiraFormattedMatchString(self.rule, match))
+                if len(matches) > 1:
+                    body += '\n----------------------------------------\n'
         return body
 
     def get_aggregation_summary_text(self, matches):
@@ -944,6 +964,22 @@ class HipChatAlerter(Alerter):
         try:
             if self.hipchat_ignore_ssl_errors:
                 requests.packages.urllib3.disable_warnings()
+
+            if self.rule.get('hipchat_mentions', []):
+                ping_users = self.rule.get('hipchat_mentions', [])
+                ping_msg = payload.copy()
+                ping_msg['message'] = "ping {}".format(
+                    ", ".join("@{}".format(user) for user in ping_users)
+                )
+                ping_msg['message_format'] = "text"
+
+                response = requests.post(
+                    self.url,
+                    data=json.dumps(ping_msg, cls=DateTimeEncoder),
+                    headers=headers,
+                    verify=not self.hipchat_ignore_ssl_errors,
+                    proxies=proxies)
+
             response = requests.post(self.url, data=json.dumps(payload, cls=DateTimeEncoder), headers=headers,
                                      verify=not self.hipchat_ignore_ssl_errors,
                                      proxies=proxies)
@@ -1030,11 +1066,7 @@ class SlackAlerter(Alerter):
 
     def format_body(self, body):
         # https://api.slack.com/docs/formatting
-        body = body.encode('UTF-8')
-        body = body.replace('&', '&amp;')
-        body = body.replace('<', '&lt;')
-        body = body.replace('>', '&gt;')
-        return body
+        return body.encode('UTF-8')
 
     def get_aggregation_summary_text__maximum_width(self):
         width = super(SlackAlerter, self).get_aggregation_summary_text__maximum_width()
@@ -1150,7 +1182,8 @@ class PagerDutyAlerter(Alerter):
                     if key_value:
                         incident_key_values[i] = key_value
 
-            incident_key_values = ['<MISSING VALUE>' if val is None else val for val in incident_key_values]
+            missing = self.rule.get('alert_missing_value', '<MISSING VALUE>')
+            incident_key_values = [missing if val is None else val for val in incident_key_values]
             return self.pagerduty_incident_key.format(*incident_key_values)
         else:
             return self.pagerduty_incident_key
@@ -1224,6 +1257,7 @@ class VictorOpsAlerter(Alerter):
         self.victorops_api_key = self.rule['victorops_api_key']
         self.victorops_routing_key = self.rule['victorops_routing_key']
         self.victorops_message_type = self.rule['victorops_message_type']
+        self.victorops_entity_id = self.rule.get('victorops_entity_id', None)
         self.victorops_entity_display_name = self.rule.get('victorops_entity_display_name', 'no entity display name')
         self.url = 'https://alert.victorops.com/integrations/generic/20131114/alert/%s/%s' % (
             self.victorops_api_key, self.victorops_routing_key)
@@ -1242,6 +1276,8 @@ class VictorOpsAlerter(Alerter):
             "monitoring_tool": "ElastAlert",
             "state_message": body
         }
+        if self.victorops_entity_id:
+            payload["entity_id"] = self.victorops_entity_id
 
         try:
             response = requests.post(self.url, data=json.dumps(payload, cls=DateTimeEncoder), headers=headers, proxies=proxies)
@@ -1274,6 +1310,8 @@ class TelegramAlerter(Alerter):
             # Separate text of aggregated alerts with dashes
             if len(matches) > 1:
                 body += '\n----------------------------------------\n'
+        if len(body) > 4095:
+            body = body[0:4000] + "\n⚠ *message was cropped according to telegram limits!* ⚠"
         body += u' ```'
 
         headers = {'content-type': 'application/json'}
@@ -1291,7 +1329,7 @@ class TelegramAlerter(Alerter):
             warnings.resetwarnings()
             response.raise_for_status()
         except RequestException as e:
-            raise EAException("Error posting to Telegram: %s" % e)
+            raise EAException("Error posting to Telegram: %s. Details: %s" % (e, "" if e.response is None else e.response.text))
 
         elastalert_logger.info(
             "Alert sent to Telegram room %s" % self.telegram_room_id)
@@ -1434,8 +1472,41 @@ class HTTPPostAlerter(Alerter):
                 'http_post_webhook_url': self.post_url}
 
 
+class StrideHTMLParser(HTMLParser):
+    """Parse html into stride's fabric structure"""
+
+    def __init__(self):
+        """
+        Define a couple markup place holders.
+        """
+        self.content = []
+        self.mark = None
+        HTMLParser.__init__(self)
+
+    def handle_starttag(self, tag, attrs):
+        """Identify and verify starting tag is fabric compatible."""
+        if tag == 'b' or tag == 'strong':
+            self.mark = dict(type='strong')
+        if tag == 'u':
+            self.mark = dict(type='underline')
+        if tag == 'a':
+            self.mark = dict(type='link', attrs=dict(attrs))
+
+    def handle_endtag(self, tag):
+        """Clear mark on endtag."""
+        self.mark = None
+
+    def handle_data(self, data):
+        """Construct data node for our data."""
+        node = dict(type='text', text=data)
+        if self.mark:
+            node['marks'] = [self.mark]
+        self.content.append(node)
+
+
 class StrideAlerter(Alerter):
     """ Creates a Stride conversation message for each alert """
+
     required_options = frozenset(
         ['stride_access_token', 'stride_cloud_id', 'stride_converstation_id'])
 
@@ -1451,11 +1522,11 @@ class StrideAlerter(Alerter):
             self.stride_cloud_id, self.stride_converstation_id)
 
     def alert(self, matches):
-        body = self.create_alert_body(matches)
+        body = self.create_alert_body(matches).strip()
 
-        # Stride sends 400 bad request on messages longer than 10000 characters
-        if (len(body) > 9999):
-            body = body[:9980] + '..(truncated)'
+        # parse body with StrideHTMLParser
+        parser = StrideHTMLParser()
+        parser.feed(body)
 
         # Post to Stride
         headers = {
@@ -1465,23 +1536,14 @@ class StrideAlerter(Alerter):
 
         # set https proxy, if it was provided
         proxies = {'https': self.stride_proxy} if self.stride_proxy else None
-        payload = {
-          "body": {
-            "content": [
-              {
-                "content": [
-                  {
-                    "text": body,
-                    "type": "text"
-                  }
-                ],
-                "type": "paragraph"
-              }
-            ],
-            "version": 1,
-            "type": "doc"
-          }
-        }
+
+        # build stride json payload
+        # https://developer.atlassian.com/cloud/stride/apis/document/structure/
+        payload = {'body': {'version': 1, 'type': "doc", 'content': [
+            {'type': "panel", 'attrs': {'panelType': "warning"}, 'content': [
+                {'type': 'paragraph', 'content': parser.content}
+            ]}
+        ]}}
 
         try:
             if self.stride_ignore_ssl_errors:

@@ -405,7 +405,6 @@ class SpikeRule(RuleType):
 
     def clear_windows(self, qk, event):
         # Reset the state and prevent alerts until windows filled again
-        self.cur_windows[qk].clear()
         self.ref_windows[qk].clear()
         self.first_event.pop(qk)
         self.skip_checks[qk] = event[self.ts_field] + self.rules['timeframe'] * 2
@@ -528,12 +527,17 @@ class FlatlineRule(FrequencyRule):
             event.update(key=key, count=count)
             self.add_match(event)
 
-            # After adding this match, leave the occurrences windows alone since it will
-            # be pruned in the next add_data or garbage_collect, but reset the first_event
-            # so that alerts continue to fire until the threshold is passed again.
-            least_recent_ts = self.get_ts(self.occurrences[key].data[0])
-            timeframe_ago = most_recent_ts - self.rules['timeframe']
-            self.first_event[key] = min(least_recent_ts, timeframe_ago)
+            if not self.rules.get('forget_keys'):
+                # After adding this match, leave the occurrences windows alone since it will
+                # be pruned in the next add_data or garbage_collect, but reset the first_event
+                # so that alerts continue to fire until the threshold is passed again.
+                least_recent_ts = self.get_ts(self.occurrences[key].data[0])
+                timeframe_ago = most_recent_ts - self.rules['timeframe']
+                self.first_event[key] = min(least_recent_ts, timeframe_ago)
+            else:
+                # Forget about this key until we see it again
+                self.first_event.pop(key)
+                self.occurrences.pop(key)
 
     def get_match_str(self, match):
         ts = match[self.rules['timestamp_field']]
@@ -594,7 +598,7 @@ class NewTermsRule(RuleType):
         window_size = datetime.timedelta(**self.rules.get('terms_window_size', {'days': 30}))
         field_name = {"field": "", "size": 2147483647}  # Integer.MAX_VALUE
         query_template = {"aggs": {"values": {"terms": field_name}}}
-        if args and args.start:
+        if args and hasattr(args, 'start') and args.start:
             end = ts_to_dt(args.start)
         else:
             end = ts_now()
@@ -1036,10 +1040,12 @@ class PercentageMatchRule(BaseAggregationRule):
         self.rules['aggregation_query_element'] = self.generate_aggregation_query()
 
     def get_match_str(self, match):
-        message = 'Percentage violation, value: %s (min: %s max : %s) \n\n' % (
-            match['percentage'],
+        percentage_format_string = self.rules.get('percentage_format_string', None)
+        message = 'Percentage violation, value: %s (min: %s max : %s) of %s items\n\n' % (
+            percentage_format_string % (match['percentage']) if percentage_format_string else match['percentage'],
             self.rules.get('min_percentage'),
-            self.rules.get('max_percentage')
+            self.rules.get('max_percentage'),
+            match['denominator']
         )
         return message
 
@@ -1072,7 +1078,7 @@ class PercentageMatchRule(BaseAggregationRule):
             else:
                 match_percentage = (match_bucket_count * 1.0) / (total_count * 1.0) * 100
                 if self.percentage_violation(match_percentage):
-                    match = {self.rules['timestamp_field']: timestamp, 'percentage': match_percentage}
+                    match = {self.rules['timestamp_field']: timestamp, 'percentage': match_percentage, 'denominator': total_count}
                     if query_key is not None:
                         match[self.rules['query_key']] = query_key
                     self.add_match(match)

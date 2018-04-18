@@ -14,7 +14,7 @@ from elastalert.config import load_modules
 from elastalert.config import load_options
 from elastalert.config import load_rules
 from elastalert.util import EAException
-
+from elastalert.config import import_rules
 
 test_config = {'rules_folder': 'test_folder',
                'run_every': {'minutes': 10},
@@ -92,6 +92,9 @@ def test_import_import():
         assert rules['es_host'] == 'imported_host'
         assert rules['email'] == ['test@test.test']
         assert rules['filter'] == import_rule['filter']
+
+        # check global import_rule dependency
+        assert import_rules == {'blah.yaml': ['importme.ymlt']}
 
 
 def test_import_absolute_import():
@@ -228,6 +231,20 @@ def test_load_ssl_env_true():
                 rules = load_rules(test_args)
 
                 assert rules['use_ssl'] is True
+
+
+def test_load_disabled_rules():
+    test_rule_copy = copy.deepcopy(test_rule)
+    test_rule_copy['is_enabled'] = False
+    test_config_copy = copy.deepcopy(test_config)
+    with mock.patch('elastalert.config.yaml_loader') as mock_open:
+        mock_open.side_effect = [test_config_copy, test_rule_copy]
+
+        with mock.patch('os.listdir') as mock_ls:
+            mock_ls.return_value = ['testrule.yaml']
+            rules = load_rules(test_args)
+            # The rule is not loaded for it has "is_enabled=False"
+            assert len(rules['rules']) == 0
 
 
 def test_compound_query_key():

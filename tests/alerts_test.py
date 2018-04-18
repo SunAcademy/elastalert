@@ -319,7 +319,8 @@ def test_email_with_args():
         'alert_subject': 'Test alert for {0} {1}',
         'alert_subject_args': ['test_term', 'test.term'],
         'alert_text': 'Test alert for {0} and {1} {2}',
-        'alert_text_args': ['test_arg1', 'test_arg2', 'test.arg3']
+        'alert_text_args': ['test_arg1', 'test_arg2', 'test.arg3'],
+        'alert_missing_value': '<CUSTOM MISSING VALUE>'
     }
     with mock.patch('elastalert.alerts.SMTP') as mock_smtp:
         mock_smtp.return_value = mock.Mock()
@@ -339,7 +340,7 @@ def test_email_with_args():
         body_text = body.split('\n\n')[-1][:-1].decode('base64')
 
         assert 'testing' in body_text
-        assert '<MISSING VALUE>' in body_text
+        assert '<CUSTOM MISSING VALUE>' in body_text
         assert '☃' in body_text
 
         assert 'Reply-To: test@example.com' in body
@@ -1430,7 +1431,7 @@ def test_resolving_rule_references(ea):
     assert 'the_owner' == alert.rule['nested_dict']['nested_owner']
 
 
-def test_stride():
+def test_stride_plain_text():
     rule = {
         'name': 'Test Rule',
         'type': 'any',
@@ -1449,26 +1450,244 @@ def test_stride():
     with mock.patch('requests.post') as mock_post_request:
         alert.alert([match])
 
-    body = "{0}\n\n@timestamp: {1}\nsomefield: {2}\n".format(
+    body = "{0}\n\n@timestamp: {1}\nsomefield: {2}".format(
         rule['name'], match['@timestamp'], match['somefield']
     )
-    expected_data = {
-      "body": {
-        "content": [
-          {
-            "content": [
-              {
-                "text": body,
-                "type": "text"
-              }
-            ],
-            "type": "paragraph"
-          }
-        ],
-        "version": 1,
-        "type": "doc"
-      }
+    expected_data = {'body': {'version': 1, 'type': "doc", 'content': [
+        {'type': "panel", 'attrs': {'panelType': "warning"}, 'content': [
+            {'type': 'paragraph', 'content': [
+                {'type': 'text', 'text': body}
+            ]}
+        ]}
+    ]}}
+
+    mock_post_request.assert_called_once_with(
+        alert.url,
+        data=mock.ANY,
+        headers={
+            'content-type': 'application/json',
+            'Authorization': 'Bearer {}'.format(rule['stride_access_token'])},
+        verify=True,
+        proxies=None
+    )
+    assert expected_data == json.loads(
+        mock_post_request.call_args_list[0][1]['data'])
+
+
+def test_stride_underline_text():
+    rule = {
+        'name': 'Test Rule',
+        'type': 'any',
+        'stride_access_token': 'token',
+        'stride_cloud_id': 'cloud_id',
+        'stride_converstation_id': 'converstation_id',
+        'alert_subject': 'Cool subject',
+        'alert_text': '<u>Underline Text</u>',
+        'alert_text_type': 'alert_text_only',
+        'alert': []
     }
+    load_modules(rule)
+    alert = StrideAlerter(rule)
+    match = {
+        '@timestamp': '2016-01-01T00:00:00',
+        'somefield': 'foobarbaz'
+    }
+    with mock.patch('requests.post') as mock_post_request:
+        alert.alert([match])
+
+    body = "Underline Text"
+    expected_data = {'body': {'version': 1, 'type': "doc", 'content': [
+        {'type': "panel", 'attrs': {'panelType': "warning"}, 'content': [
+            {'type': 'paragraph', 'content': [
+                {'type': 'text', 'text': body, 'marks': [
+                    {'type': 'underline'}
+                ]}
+            ]}
+        ]}
+    ]}}
+
+    mock_post_request.assert_called_once_with(
+        alert.url,
+        data=mock.ANY,
+        headers={
+            'content-type': 'application/json',
+            'Authorization': 'Bearer {}'.format(rule['stride_access_token'])},
+        verify=True,
+        proxies=None
+    )
+    assert expected_data == json.loads(
+        mock_post_request.call_args_list[0][1]['data'])
+
+
+def test_stride_bold_text():
+    rule = {
+        'name': 'Test Rule',
+        'type': 'any',
+        'stride_access_token': 'token',
+        'stride_cloud_id': 'cloud_id',
+        'stride_converstation_id': 'converstation_id',
+        'alert_subject': 'Cool subject',
+        'alert_text': '<b>Bold Text</b>',
+        'alert_text_type': 'alert_text_only',
+        'alert': []
+    }
+    load_modules(rule)
+    alert = StrideAlerter(rule)
+    match = {
+        '@timestamp': '2016-01-01T00:00:00',
+        'somefield': 'foobarbaz'
+    }
+    with mock.patch('requests.post') as mock_post_request:
+        alert.alert([match])
+
+    body = "Bold Text"
+    expected_data = {'body': {'version': 1, 'type': "doc", 'content': [
+        {'type': "panel", 'attrs': {'panelType': "warning"}, 'content': [
+            {'type': 'paragraph', 'content': [
+                {'type': 'text', 'text': body, 'marks': [
+                    {'type': 'strong'}
+                ]}
+            ]}
+        ]}
+    ]}}
+
+    mock_post_request.assert_called_once_with(
+        alert.url,
+        data=mock.ANY,
+        headers={
+            'content-type': 'application/json',
+            'Authorization': 'Bearer {}'.format(rule['stride_access_token'])},
+        verify=True,
+        proxies=None
+    )
+    assert expected_data == json.loads(
+        mock_post_request.call_args_list[0][1]['data'])
+
+
+def test_stride_strong_text():
+    rule = {
+        'name': 'Test Rule',
+        'type': 'any',
+        'stride_access_token': 'token',
+        'stride_cloud_id': 'cloud_id',
+        'stride_converstation_id': 'converstation_id',
+        'alert_subject': 'Cool subject',
+        'alert_text': '<strong>Bold Text</strong>',
+        'alert_text_type': 'alert_text_only',
+        'alert': []
+    }
+    load_modules(rule)
+    alert = StrideAlerter(rule)
+    match = {
+        '@timestamp': '2016-01-01T00:00:00',
+        'somefield': 'foobarbaz'
+    }
+    with mock.patch('requests.post') as mock_post_request:
+        alert.alert([match])
+
+    body = "Bold Text"
+    expected_data = {'body': {'version': 1, 'type': "doc", 'content': [
+        {'type': "panel", 'attrs': {'panelType': "warning"}, 'content': [
+            {'type': 'paragraph', 'content': [
+                {'type': 'text', 'text': body, 'marks': [
+                    {'type': 'strong'}
+                ]}
+            ]}
+        ]}
+    ]}}
+
+    mock_post_request.assert_called_once_with(
+        alert.url,
+        data=mock.ANY,
+        headers={
+            'content-type': 'application/json',
+            'Authorization': 'Bearer {}'.format(rule['stride_access_token'])},
+        verify=True,
+        proxies=None
+    )
+    assert expected_data == json.loads(
+        mock_post_request.call_args_list[0][1]['data'])
+
+
+def test_stride_hyperlink():
+    rule = {
+        'name': 'Test Rule',
+        'type': 'any',
+        'stride_access_token': 'token',
+        'stride_cloud_id': 'cloud_id',
+        'stride_converstation_id': 'converstation_id',
+        'alert_subject': 'Cool subject',
+        'alert_text': '<a href="http://stride.com">Link</a>',
+        'alert_text_type': 'alert_text_only',
+        'alert': []
+    }
+    load_modules(rule)
+    alert = StrideAlerter(rule)
+    match = {
+        '@timestamp': '2016-01-01T00:00:00',
+        'somefield': 'foobarbaz'
+    }
+    with mock.patch('requests.post') as mock_post_request:
+        alert.alert([match])
+
+    body = "Link"
+    expected_data = {'body': {'version': 1, 'type': "doc", 'content': [
+        {'type': "panel", 'attrs': {'panelType': "warning"}, 'content': [
+            {'type': 'paragraph', 'content': [
+                {'type': 'text', 'text': body, 'marks': [
+                    {'type': 'link', 'attrs': {'href': 'http://stride.com'}}
+                ]}
+            ]}
+        ]}
+    ]}}
+
+    mock_post_request.assert_called_once_with(
+        alert.url,
+        data=mock.ANY,
+        headers={
+            'content-type': 'application/json',
+            'Authorization': 'Bearer {}'.format(rule['stride_access_token'])},
+        verify=True,
+        proxies=None
+    )
+    assert expected_data == json.loads(
+        mock_post_request.call_args_list[0][1]['data'])
+
+
+def test_stride_html():
+    rule = {
+        'name': 'Test Rule',
+        'type': 'any',
+        'stride_access_token': 'token',
+        'stride_cloud_id': 'cloud_id',
+        'stride_converstation_id': 'converstation_id',
+        'alert_subject': 'Cool subject',
+        'alert_text': '<b>Alert</b>: we found something. <a href="http://stride.com">Link</a>',
+        'alert_text_type': 'alert_text_only',
+        'alert': []
+    }
+    load_modules(rule)
+    alert = StrideAlerter(rule)
+    match = {
+        '@timestamp': '2016-01-01T00:00:00',
+        'somefield': 'foobarbaz'
+    }
+    with mock.patch('requests.post') as mock_post_request:
+        alert.alert([match])
+
+    expected_data = {'body': {'version': 1, 'type': "doc", 'content': [
+        {'type': "panel", 'attrs': {'panelType': "warning"}, 'content': [
+            {'type': 'paragraph', 'content': [
+                {'type': 'text', 'text': 'Alert', 'marks': [
+                    {'type': 'strong'}
+                ]},
+                {'type': 'text', 'text': ': we found something. '},
+                {'type': 'text', 'text': 'Link', 'marks': [
+                    {'type': 'link', 'attrs': {'href': 'http://stride.com'}}
+                ]}
+            ]}
+        ]}
+    ]}}
 
     mock_post_request.assert_called_once_with(
         alert.url,

@@ -84,6 +84,8 @@ Rule Configuration Cheat Sheet
 +--------------------------------------------------------------+           |
 | ``priority`` (int, default 2)                                |           |
 +--------------------------------------------------------------+           |
+| ``scan_entire_timeframe`` (bool, default False)              |           |
++--------------------------------------------------------------+           |
 | ``import`` (string)                                          |           |
 |                                                              |           |
 | IGNORED IF ``use_count_query`` or ``use_terms_query`` is true|           |
@@ -101,6 +103,8 @@ Rule Configuration Cheat Sheet
 | ``alert_text_args`` (array of strs)                          |           |
 +--------------------------------------------------------------+           |
 | ``alert_text_kw`` (object)                                   |           |
++--------------------------------------------------------------+           |
+| ``alert_missing_value`` (string, default "<MISSING VALUE>")  |           |
 +--------------------------------------------------------------+-----------+
 
 |
@@ -221,7 +225,7 @@ import
 
 ``import``: If specified includes all the settings from this yaml file. This allows common config options to be shared. Note that imported files that aren't
 complete rules should not have a ``.yml`` or ``.yaml`` suffix so that ElastAlert doesn't treat them as rules. Filters in imported files are merged (ANDed)
-with any filters in the rule. You can only have one import per rule, though the imported file can import another file, recursively. The filename 
+with any filters in the rule. You can only have one import per rule, though the imported file can import another file, recursively. The filename
 can be an absolute path or relative to the rules directory. (Optional, string, no default)
 
 use_ssl
@@ -569,6 +573,15 @@ ElastAlert will use ``fields`` to retrieve stored fields. Both of these are repr
 See https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping-fields.html for more details. The fields used come from ``include``,
 see above for more details. (Optional, boolean, default True)
 
+scan_entire_timeframe
+^^^^^^^^^^^^^^^^^^^^^
+
+``scan_entire_timeframe``: If true, when ElastAlert starts, it will always start querying at the current time minus the timeframe.
+``timeframe`` must exist in the rule. This may be useful, for example, if you are using a flatline rule type with a large timeframe,
+and you want to be sure that if ElastAlert restarts, you can still get alerts. This may cause duplicate alerts for some rule types,
+for example, Frequency can alert multiple times in a single timeframe, and if ElastAlert were to restart with this setting, it may
+scan the same range again, triggering duplicate alerts.
+
 Some rules and alerts require additional options, which also go in the top level of the rule configuration file.
 
 
@@ -741,7 +754,7 @@ This rule requires three additional options:
 ``compare_key``: The names of the field to monitor for changes. Since this is list of strings, we can
 have multiple keys. An alert will trigger if any of the fields change.
 
-``ignore_null``: If true, events without a ``compare_key`` field will not count as changed. Currently this check for all the fields in ``compare_key`` 
+``ignore_null``: If true, events without a ``compare_key`` field will not count as changed. Currently this check for all the fields in ``compare_key``
 
 ``query_key``: This rule is applied on a per-``query_key`` basis. This field must be present in all of
 the events that are checked.
@@ -938,6 +951,9 @@ default 50, unique terms.
 ``query_key``: With flatline rule, ``query_key`` means that an alert will be triggered if any value of ``query_key`` has been seen at least once
 and then falls below the threshold.
 
+``forget_keys``: Only valid when used with ``query_key``. If this is set to true, ElastAlert will "forget" about the ``query_key`` value that
+triggers an alert, therefore preventing any more alerts for it until it's seen again.
+
 New Term
 ~~~~~~~~
 
@@ -1001,15 +1017,15 @@ Optional:
 Metric Aggregation
 ~~~~~~~~~~~~~~~~~~
 
-``metric_aggregation``: This rule matches when the value of a metric within the calculation window is higher or lower than a threshold. By 
+``metric_aggregation``: This rule matches when the value of a metric within the calculation window is higher or lower than a threshold. By
 default this is ``buffer_time``.
 
 This rule requires:
 
-``metric_agg_key``: This is the name of the field over which the metric value will be calculated. The underlying type of this field must be 
-supported by the specified aggregation type. 
+``metric_agg_key``: This is the name of the field over which the metric value will be calculated. The underlying type of this field must be
+supported by the specified aggregation type.
 
-``metric_agg_type``: The type of metric aggregation to perform on the ``metric_agg_key`` field. This must be one of 'min', 'max', 'avg', 
+``metric_agg_type``: The type of metric aggregation to perform on the ``metric_agg_key`` field. This must be one of 'min', 'max', 'avg',
 'sum', 'cardinality', 'value_count'.
 
 ``doc_type``: Specify the ``_type`` of document to search for.
@@ -1022,50 +1038,50 @@ This rule also requires at least one of the two following options:
 
 Optional:
 
-``query_key``: Group metric calculations by this field. For each unique value of the ``query_key`` field, the metric will be calculated and 
+``query_key``: Group metric calculations by this field. For each unique value of the ``query_key`` field, the metric will be calculated and
 evaluated separately against the threshold(s).
 
-``use_run_every_query_size``: By default the metric value is calculated over a ``buffer_time`` sized window. If this parameter is true 
-the rule will use ``run_every`` as the calculation window.  
+``use_run_every_query_size``: By default the metric value is calculated over a ``buffer_time`` sized window. If this parameter is true
+the rule will use ``run_every`` as the calculation window.
 
-``allow_buffer_time_overlap``: This setting will only have an effect if ``use_run_every_query_size`` is false and ``buffer_time`` is greater 
-than ``run_every``. If true will allow the start of the metric calculation window to overlap the end time of a previous run. By default the 
-start and end times will not overlap, so if the time elapsed since the last run is less than the metric calculation window size, rule execution 
-will be skipped (to avoid calculations on partial data). 
+``allow_buffer_time_overlap``: This setting will only have an effect if ``use_run_every_query_size`` is false and ``buffer_time`` is greater
+than ``run_every``. If true will allow the start of the metric calculation window to overlap the end time of a previous run. By default the
+start and end times will not overlap, so if the time elapsed since the last run is less than the metric calculation window size, rule execution
+will be skipped (to avoid calculations on partial data).
 
-``bucket_interval``: If present this will divide the metric calculation window into ``bucket_interval`` sized segments. The metric value will 
-be calculated and evaluated against the threshold(s) for each segment. If ``bucket_interval`` is specified then ``buffer_time`` must be a 
+``bucket_interval``: If present this will divide the metric calculation window into ``bucket_interval`` sized segments. The metric value will
+be calculated and evaluated against the threshold(s) for each segment. If ``bucket_interval`` is specified then ``buffer_time`` must be a
 multiple of ``bucket_interval``. (Or ``run_every`` if ``use_run_every_query_size`` is true).
-  
-``sync_bucket_interval``: This only has an effect if ``bucket_interval`` is present. If true it will sync the start and end times of the metric 
-calculation window to the keys (timestamps) of the underlying date_histogram buckets. Because of the way elasticsearch calculates date_histogram 
-bucket keys these usually round evenly to nearest minute, hour, day etc (depending on the bucket size). By default the bucket keys are offset to 
-allign with the time elastalert runs, (This both avoid calculations on partial data, and ensures the very latest documents are included). 
-See: https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-bucket-datehistogram-aggregation.html#_offset for a 
+
+``sync_bucket_interval``: This only has an effect if ``bucket_interval`` is present. If true it will sync the start and end times of the metric
+calculation window to the keys (timestamps) of the underlying date_histogram buckets. Because of the way elasticsearch calculates date_histogram
+bucket keys these usually round evenly to nearest minute, hour, day etc (depending on the bucket size). By default the bucket keys are offset to
+allign with the time elastalert runs, (This both avoid calculations on partial data, and ensures the very latest documents are included).
+See: https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-bucket-datehistogram-aggregation.html#_offset for a
 more comprehensive explaination.
 
 Percentage Match
 ~~~~~~~~~~~~~~~~
 
-``percentage_match``: This rule matches when the percentage of document in the match bucket within a calculation window is higher or lower 
+``percentage_match``: This rule matches when the percentage of document in the match bucket within a calculation window is higher or lower
 than a threshold. By default the calculation window is ``buffer_time``.
 
 This rule requires:
 
-``match_bucket_filter``: ES filter DSL. This defines a filter for the match bucket, which should match a subset of the documents returned by the 
-main query filter.   
+``match_bucket_filter``: ES filter DSL. This defines a filter for the match bucket, which should match a subset of the documents returned by the
+main query filter.
 
 ``doc_type``: Specify the ``_type`` of document to search for.
 
 This rule also requires at least one of the two following options:
 
-``min_percentage``: If the percentage of matching documents is less than this number, an alert will be triggered. 
+``min_percentage``: If the percentage of matching documents is less than this number, an alert will be triggered.
 
 ``max_percentage``: If the percentage of matching documents is greater than this number, an alert will be triggered.
 
 Optional:
 
-``query_key``: Group percentage by this field. For each unique value of the ``query_key`` field, the percentage will be calculated and 
+``query_key``: Group percentage by this field. For each unique value of the ``query_key`` field, the percentage will be calculated and
 evaluated separately against the threshold(s).
 
 ``use_run_every_query_size``: See ``use_run_every_query_size`` in  Metric Aggregation rule
@@ -1073,8 +1089,12 @@ evaluated separately against the threshold(s).
 ``allow_buffer_time_overlap``:  See ``allow_buffer_time_overlap`` in  Metric Aggregation rule
 
 ``bucket_interval``: See ``bucket_interval`` in  Metric Aggregation rule
-  
+
 ``sync_bucket_interval``: See ``sync_bucket_interval`` in  Metric Aggregation rule
+
+``percentage_format_string``: An optional format string to apply to the percentage value in the alert match text. Must be a valid python format string.
+For example, "%.2f" will round it to 2 decimal places.
+See: https://docs.python.org/3.4/library/string.html#format-specification-mini-language
 
 .. _alerts:
 
@@ -1114,7 +1134,7 @@ It is mandatory to enclose the ``@timestamp`` field in quotes since in YAML form
 
 In case the rule matches multiple objects in the index, only the first match is used to populate the arguments for the formatter.
 
-If the field(s) mentioned in the arguments list are missing, the email alert will have the text ``<MISSING VALUE>`` in place of its expected value. This will also occur if ``use_count_query`` is set to true.
+If the field(s) mentioned in the arguments list are missing, the email alert will have the text ``alert_missing_value`` in place of its expected value. This will also occur if ``use_count_query`` is set to true.
 
 Alert Content
 ~~~~~~~~~~~~~
@@ -1131,7 +1151,7 @@ There are several ways to format the body text of the various types of events. I
 
 Similarly to ``alert_subject``, ``alert_text`` can be further formatted using standard Python formatting syntax.
 The field names whose values will be used as the arguments can be passed with ``alert_text_args`` or ``alert_text_kw``.
-You may also refer to any top-level rule property in the ``alert_subject_args``, ``alert_text_args``, and ``alert_text_kw fields``.  However, if the matched document has a key with the same name, that will take preference over the rule property.
+You may also refer to any top-level rule property in the ``alert_subject_args``, ``alert_text_args``, ``alert_missing_value``, and ``alert_text_kw fields``.  However, if the matched document has a key with the same name, that will take preference over the rule property.
 
 By default::
 
@@ -1161,6 +1181,12 @@ With ``alert_text_type: exclude_fields``::
 
                           {top_counts}
 
+With ``alert_text_type: aggregation_summary_only``::
+
+    body                = rule_name
+
+                          aggregation_summary
++
 ruletype_text is the string returned by RuleType.get_match_str.
 
 field_values will contain every key value pair included in the results from Elasticsearch. These fields include "@timestamp" (or the value of ``timestamp_field``),
@@ -1375,6 +1401,11 @@ Optional:
 
 ``opsgenie_alias``: Set the OpsGenie alias. The alias can be formatted with fields from the first match e.g "{app_name} error".
 
+``opsgenie_subject``: A string used to create the title of the OpsGenie alert. Can use Python string formatting.
+
+``opsgenie_subject_args``: A list of fields to use to format ``opsgenie_subject`` if it contains formaters.
+
+
 SNS
 ~~~
 
@@ -1427,10 +1458,18 @@ text - Message is treated just like a message sent by a user. Can include @menti
 Valid values: html, text.
 Defaults to 'html'.
 
+``hipchat_mentions``: When using a ``html`` message format, it's not possible to mentions specific users using the ``@user`` syntax.
+In that case, you can set ``hipchat_mentions`` to a list of users which will be first mentioned using a single text message, then the normal ElastAlert message will be sent to Hipchat.
+If set, it will mention the users, no matter if the original message format is set to HTML or text.
+Valid values: list of strings.
+Defaults to ``[]``.
+
+
 Stride
 ~~~~~~~
 
 Stride alerter will send a notification to a predefined Stride room. The body of the notification is formatted the same as with other alerters.
+Simple HTML such as <a> and <b> tags will be parsed into a format that Stride can consume.
 
 The alerter requires the following two options:
 
@@ -1500,7 +1539,7 @@ The alerter requires the following two options:
 
 ``telegram_bot_token``: The token is a string along the lines of ``110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw`` that will be required to authorize the bot and send requests to the Bot API. You can learn about obtaining tokens and generating new ones in this document https://core.telegram.org/bots#botfather
 
-``telegram_room_id``: Unique identifier for the target chat or username of the target channel (in the format @channelusername)
+``telegram_room_id``: Unique identifier for the target chat or username of the target channel using telegram chat_id (in the format "-xxxxxxxx")
 
 Optional:
 
@@ -1587,7 +1626,9 @@ The alerter requires the following options:
 
 Optional:
 
-``victorops_entity_display_name``: Human-readable name of alerting entity. Used by VictorOps to correlate incidents by host througout the alert lifecycle.
+``victorops_entity_id``: The identity of the incident used by VictorOps to correlate incidents thoughout the alert lifecycle. If not defined, VictorOps will assign a random string to each alert.
+
+``victorops_entity_display_name``: Human-readable name of alerting entity to summarize incidents without affecting the life-cycle workflow.
 
 ``victorops_proxy``: By default ElastAlert will not use a network proxy to send notifications to VictorOps. Set this option using ``hostname:port`` if you need to use a proxy.
 
